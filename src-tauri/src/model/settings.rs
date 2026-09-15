@@ -61,23 +61,28 @@ mod residency_tests {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TranscriptionModel {
-    Tiny,
-    Base,
-    Small,
+/// The transcription model, as a catalogue id (which is also the file's name
+/// on disk, `{id}.gguf`). A plain string rather than a closed enum because the
+/// choice is no longer three whisper sizes but everything transcribe.cpp can
+/// run, discovered at runtime (`model::remote`).
+pub fn default_transcription_model() -> String {
+    "whisper-base".into()
 }
 
-impl TranscriptionModel {
-    /// The catalogue id, which is also the file's name on disk.
-    pub fn model_id(self) -> &'static str {
-        match self {
-            TranscriptionModel::Tiny => "whisper-tiny",
-            TranscriptionModel::Base => "whisper-base",
-            TranscriptionModel::Small => "whisper-small",
-        }
-    }
+/// Accepts the pre-catalogue enum names (`tiny`/`base`/`small`) so settings
+/// written before this became an id keep resolving; every other value is
+/// already a catalogue id and is used unchanged.
+fn de_transcription_model<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(match raw.as_str() {
+        "tiny" => "whisper-tiny".into(),
+        "base" => "whisper-base".into(),
+        "small" => "whisper-small".into(),
+        _ => raw,
+    })
 }
 
 /// What a model runs on.
@@ -122,7 +127,11 @@ pub struct Settings {
     pub residency: Residency,
     pub provider_name: String,
     pub default_local_only: bool,
-    pub transcription_model: TranscriptionModel,
+    #[serde(
+        default = "default_transcription_model",
+        deserialize_with = "de_transcription_model"
+    )]
+    pub transcription_model: String,
     /// `None` until chosen. Connections still work without it -- topics alone
     /// propose -- so this is an upgrade to the ordering, never a dependency.
     #[serde(default)]
@@ -178,7 +187,7 @@ impl Default for Settings {
             residency: Residency::Warm,
             provider_name: "llama-server".into(),
             default_local_only: false,
-            transcription_model: TranscriptionModel::Base,
+            transcription_model: default_transcription_model(),
             embedding_model_id: None,
             transcription_backend: ComputeBackend::Auto,
             reasoning_backend: ComputeBackend::Auto,
@@ -312,4 +321,38 @@ pub struct ModelInfo {
     /// Where the file comes from. Served to the frontend so the user can see
     /// what the app is about to fetch before it fetches it.
     pub url: String,
+}
+
+#[cfg(test)]
+mod transcription_model_tests {
+    use super::*;
+
+    /// Deserialize `transcriptionModel` through the same door the stored
+    /// settings document uses.
+    fn with(value: &str) -> Settings {
+        let mut doc = serde_json::to_value(Settings::default()).unwrap();
+        doc["transcriptionModel"] = serde_json::json!(value);
+        serde_json::from_value(doc).unwrap()
+    }
+
+    /// Settings written before the catalogue grew stored the enum name; they
+    /// must keep resolving to the same file rather than silently losing the
+    /// user's transcription model on upgrade.
+    #[test]
+    fn legacy_enum_names_become_catalogue_ids() {
+        assert_eq!(with("tiny").transcription_model, "whisper-tiny");
+        assert_eq!(with("base").transcription_model, "whisper-base");
+        assert_eq!(with("small").transcription_model, "whisper-small");
+    }
+
+    /// Any other value is already an id (a whisper size or any transcribe.cpp
+    /// model) and is kept verbatim.
+    #[test]
+    fn a_catalogue_id_is_kept_verbatim() {
+        assert_eq!(
+            with("parakeet-tdt-0.6b-v2").transcription_model,
+            "parakeet-tdt-0.6b-v2"
+        );
+        assert_eq!(with("whisper-large-v3-turbo").transcription_model, "whisper-large-v3-turbo");
+    }
 }

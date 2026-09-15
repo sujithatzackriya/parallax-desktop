@@ -8,6 +8,8 @@ import styles from './SettingsPanel.module.css';
 import TypeEditor from './TypeEditor';
 
 const gb = (bytes: number) => `${(bytes / 1e9).toFixed(1)}GB`;
+const mb = (bytes: number) => `${Math.round(bytes / 1e6)}MB`;
+const size = (bytes: number) => (bytes >= 1e9 ? gb(bytes) : mb(bytes));
 
 
 type Rebindable = 'hotkey' | 'discardHotkey';
@@ -30,6 +32,11 @@ export default function SettingsPanel({
   const setSampleLoaded = useApp((s) => s.setSampleLoaded);
 
   const [models, setModels] = useState<ModelInfo[]>([]);
+  // The transcription catalogue is fetched from the model host, so it is kept
+  // apart from the built-in list and carries its own loading/error state.
+  const [speech, setSpeech] = useState<ModelInfo[]>([]);
+  const [speechLoading, setSpeechLoading] = useState(true);
+  const [speechError, setSpeechError] = useState<string | null>(null);
   const [capturing, setCapturing] = useState<Rebindable | null>(null);
   const [modelPathError, setModelPathError] = useState<{
     field: 'customReasoningModelPath' | 'customTranscriptionModelPath';
@@ -39,17 +46,33 @@ export default function SettingsPanel({
   useEffect(() => {
     const bridge = getBridge();
     void bridge.listModels().then(setModels);
+    void bridge
+      .listTranscriptionCatalog()
+      .then((m) => {
+        setSpeech(m);
+        setSpeechError(null);
+      })
+      .catch((e: unknown) => setSpeechError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setSpeechLoading(false));
     return bridge.onModelProgress((m) => {
       setModels((prev) => prev.map((x) => (x.id === m.id ? m : x)));
+      setSpeech((prev) => prev.map((x) => (x.id === m.id ? m : x)));
     });
   }, []);
+
+  // Delete removes the file; refetch both lists so the row falls back to
+  // "download". The host list is cached backend-side, so this is cheap.
+  async function removeModel(id: string) {
+    await getBridge().deleteModel(id);
+    void getBridge().listModels().then(setModels);
+    void getBridge().listTranscriptionCatalog().then(setSpeech).catch(() => {});
+  }
 
   // What a custom path would be overriding, named for the "none — using…" line.
   const reasoningCatalogueName =
     models.find((m) => m.id === settings.modelId)?.name ?? 'no catalogue model chosen';
   const transcriptionCatalogueName =
-    models.find((m) => m.kind === 'transcription' && m.name === settings.transcriptionModel)
-      ?.name ?? settings.transcriptionModel;
+    speech.find((m) => m.id === settings.transcriptionModel)?.name ?? settings.transcriptionModel;
 
   // Capture the next chord for whichever field is rebinding — same logic as
   // onboarding's hotkey capture, generalised to either field here.
@@ -164,29 +187,78 @@ export default function SettingsPanel({
       <section className={styles.section}>
         <h2 className={styles.sectionTitle}>transcription</h2>
 
-        <div className={styles.row}>
-          <span className={styles.label}>model</span>
-          <div className={styles.options}>
-            {models
-              .filter((m) => m.kind === 'transcription')
-              .map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className={
-                    m.name === settings.transcriptionModel ? styles.optionOn : styles.option
-                  }
-                  onClick={() =>
-                    void update({
-                      transcriptionModel: m.name as Settings['transcriptionModel'],
-                    })
-                  }
-                >
-                  {m.name} · {Math.round(m.sizeBytes / 1e6)}MB
-                  {m.state.kind === 'ready' ? ' · ready' : ''}
-                </button>
-              ))}
-          </div>
+        {speechError && (
+          <p className={styles.reject}>couldn’t load the model catalogue: {speechError}</p>
+        )}
+        {speechLoading && speech.length === 0 && (
+          <p className={styles.helper}>loading models…</p>
+        )}
+        <div className={styles.models}>
+          {speech.map((m) => (
+            <div
+              key={m.id}
+              className={m.id === settings.transcriptionModel ? styles.modelRowOn : styles.modelRow}
+            >
+              <button
+                type="button"
+                className={styles.modelSelect}
+                disabled={m.state.kind !== 'ready'}
+                onClick={() => void update({ transcriptionModel: m.id })}
+              >
+                <span className={styles.modelName}>{m.name}</span>
+                <span className={styles.modelMeta}>
+                  {[m.quantization, m.sizeBytes ? size(m.sizeBytes) : null]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+              </button>
+
+              <div className={styles.modelState}>
+                {m.state.kind === 'ready' && (
+                  <>
+                    {m.id === settings.transcriptionModel && (
+                      <span className={styles.ready}>in use</span>
+                    )}
+                    <button
+                      type="button"
+                      className={styles.inline}
+                      onClick={() => void removeModel(m.id)}
+                    >
+                      delete
+                    </button>
+                  </>
+                )}
+                {m.state.kind === 'failed' && (
+                  <button
+                    type="button"
+                    className={styles.download}
+                    onClick={() => void getBridge().downloadModel(m.id, m.url)}
+                  >
+                    retry
+                  </button>
+                )}
+                {m.state.kind === 'not-downloaded' && (
+                  <button
+                    type="button"
+                    className={styles.download}
+                    onClick={() => void getBridge().downloadModel(m.id, m.url)}
+                  >
+                    download
+                  </button>
+                )}
+                {m.state.kind === 'downloading' && (
+                  <div className={styles.progressTrack} aria-hidden>
+                    <div
+                      className={styles.progressFill}
+                      style={{
+                        width: `${m.state.totalBytes ? Math.round((m.state.receivedBytes / m.state.totalBytes) * 100) : 0}%`,
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
 
         <div className={styles.row}>
@@ -217,7 +289,7 @@ export default function SettingsPanel({
         {modelPathError?.field === 'customTranscriptionModelPath' && (
           <p className={styles.reject}>{modelPathError.message}</p>
         )}
-        <p className={styles.helper}>a whisper GGUF in the same format as the built-in ones</p>
+        <p className={styles.helper}>a transcribe.cpp GGUF in the same format as the built-in ones</p>
 
         {/* Fact, not a setting — no control here on purpose. */}
         <p className={styles.statement}>Audio and transcription never leave this machine.</p>
@@ -243,7 +315,18 @@ export default function SettingsPanel({
               </button>
 
               <div className={styles.modelState}>
-                {model.state.kind === 'ready' && <span className={styles.ready}>ready</span>}
+                {model.state.kind === 'ready' && (
+                  <>
+                    <span className={styles.ready}>ready</span>
+                    <button
+                      type="button"
+                      className={styles.inline}
+                      onClick={() => void removeModel(model.id)}
+                    >
+                      delete
+                    </button>
+                  </>
+                )}
                 {model.state.kind === 'failed' && <span className={styles.failed}>failed</span>}
                 {model.state.kind === 'not-downloaded' && (
                   <button

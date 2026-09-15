@@ -259,6 +259,8 @@ pub fn run() {
             commands::models::list_models,
             commands::models::setup_complete,
             commands::models::download_model,
+            commands::models::list_transcription_catalog,
+            commands::models::delete_model,
             commands::models::models_location,
             commands::models::pick_model_file,
             commands::system::get_settings,

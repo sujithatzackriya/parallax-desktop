@@ -4,7 +4,6 @@ use crate::audio::recorder::Recording;
 use crate::db;
 use crate::error::Result;
 use crate::llm::LlmProvider;
-use crate::model::TranscriptionModel;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -393,11 +392,7 @@ impl AppState {
     /// whichever the filesystem yields first would silently ignore the setting.
     /// `None` is a normal state, not an error -- capture works without it, and
     /// the audio is the record the transcript is derived from.
-    pub fn transcription_model(
-        &self,
-        custom: Option<&str>,
-        chosen: TranscriptionModel,
-    ) -> Option<PathBuf> {
+    pub fn transcription_model(&self, custom: Option<&str>, chosen: &str) -> Option<PathBuf> {
         resolve_transcription_model(custom, chosen, &self.models_dir())
     }
 }
@@ -431,15 +426,15 @@ pub fn resolve_reasoning_model(
     })
 }
 
-/// Same rule for speech-to-text: a valid custom whisper GGUF wins, otherwise
-/// the catalogue model the settings name.
+/// Same rule for speech-to-text: a valid custom GGUF wins, otherwise the
+/// catalogue model the settings name (`chosen` is its id, i.e. `{id}.gguf`).
 pub fn resolve_transcription_model(
     custom: Option<&str>,
-    chosen: TranscriptionModel,
+    chosen: &str,
     models_dir: &Path,
 ) -> Option<PathBuf> {
     resolve_custom_gguf(custom).or_else(|| {
-        let path = models_dir.join(format!("{}.gguf", chosen.model_id()));
+        let path = models_dir.join(format!("{chosen}.gguf"));
         path.is_file().then_some(path)
     })
 }
@@ -568,7 +563,7 @@ mod custom_model_resolution_tests {
 
         let resolved = resolve_transcription_model(
             Some(custom.to_str().unwrap()),
-            crate::model::TranscriptionModel::Base,
+            "whisper-base",
             &models_dir,
         );
         assert_eq!(resolved, Some(custom));
@@ -582,7 +577,7 @@ mod custom_model_resolution_tests {
         let catalogue = gguf_file(&models_dir, "whisper-base.gguf");
 
         assert_eq!(
-            resolve_transcription_model(None, crate::model::TranscriptionModel::Base, &models_dir),
+            resolve_transcription_model(None, "whisper-base", &models_dir),
             Some(catalogue)
         );
         let _ = std::fs::remove_dir_all(&dir);

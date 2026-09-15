@@ -222,8 +222,16 @@ export class TauriBridge implements Bridge {
     return invoke('list_models');
   }
 
-  downloadModel(modelId: string): Promise<void> {
-    return invoke('download_model', { modelId });
+  listTranscriptionCatalog(): Promise<ModelInfo[]> {
+    return invoke('list_transcription_catalog');
+  }
+
+  downloadModel(modelId: string, url?: string): Promise<void> {
+    return invoke('download_model', { modelId, url });
+  }
+
+  deleteModel(modelId: string): Promise<void> {
+    return invoke('delete_model', { modelId });
   }
 
   setupComplete(): Promise<boolean> {

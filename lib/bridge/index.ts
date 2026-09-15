@@ -202,9 +202,17 @@ export interface Bridge {
   /** Drives the recommended-model default so onboarding stays one screen. */
   getSystemProfile(): Promise<SystemProfile>;
   listModels(): Promise<ModelInfo[]>;
+  /** The full transcription catalogue — every transcribe.cpp model the host
+   *  publishes — fetched over the network. Kept apart from listModels so
+   *  onboarding stays offline; only Settings pays the fetch. */
+  listTranscriptionCatalog(): Promise<ModelInfo[]>;
   /** Downloads in the background; gates nothing. Capture and transcription
-   *  work without it, and the question surfaces when the model lands (§9.4). */
-  downloadModel(modelId: string): Promise<void>;
+   *  work without it, and the question surfaces when the model lands (§9.4).
+   *  `url` is passed for catalogue models the host lists dynamically; built-in
+   *  ids resolve without it, so onboarding calls this unchanged. */
+  downloadModel(modelId: string, url?: string): Promise<void>;
+  /** Removes a downloaded model file and any partial, freeing the space. */
+  deleteModel(modelId: string): Promise<void>;
   /** Whether onboarding is behind this machine: a reasoning model chosen and
    *  every chosen model on disk. False brings onboarding back to finish. */
   setupComplete(): Promise<boolean>;
