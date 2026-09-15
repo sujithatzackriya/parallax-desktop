@@ -13,7 +13,7 @@
 use crate::error::{Error, Result};
 use crate::model::ComputeBackend;
 use std::path::Path;
-use transcribe_cpp::{Backend, Model, ModelOptions, RunOptions};
+use transcribe_cpp::{Backend, Model, ModelOptions, RunOptions, StreamOptions};
 
 pub struct Transcript {
     pub text: String,
@@ -58,14 +58,49 @@ pub fn transcribe(
         .session()
         .map_err(|e| Error::Other(format!("could not start transcription: {e}")))?;
 
-    let result = session
-        .run(pcm, &RunOptions::default())
-        .map_err(|e| Error::Other(format!("transcription failed: {e}")))?;
+    // One-shot decode where the model supports it. A streaming-only model
+    // (moonshine-streaming, nemotron-streaming, ...) refuses `run`; feed it the
+    // whole recording as a stream and finalise instead -- the same
+    // record-then-transcribe result, reached through the streaming API.
+    let text = match session.run(pcm, &RunOptions::default()) {
+        Ok(result) => result.text,
+        Err(run_err) => {
+            if !model.capabilities().supports_streaming {
+                return Err(Error::Other(format!("transcription failed: {run_err}")));
+            }
+            transcribe_streaming(&model, pcm)?
+        }
+    };
 
     Ok(Transcript {
-        text: result.text.trim().to_string(),
+        text: text.trim().to_string(),
         language: None,
     })
+}
+
+/// Runs a streaming-only model over a finished recording: the audio is fed in
+/// one-second chunks and finalised, yielding the same complete transcript the
+/// one-shot path gives every other model.
+fn transcribe_streaming(model: &Model, pcm: &[f32]) -> Result<String> {
+    // One second of 16 kHz mono per feed -- transcribe.cpp buffers internally,
+    // so the chunk size only trades call count against latency, and this is a
+    // finished recording where neither matters.
+    const CHUNK: usize = 16_000;
+    let mut session = model
+        .session()
+        .map_err(|e| Error::Other(format!("could not start transcription: {e}")))?;
+    let mut stream = session
+        .stream(&RunOptions::default(), &StreamOptions::default())
+        .map_err(|e| Error::Other(format!("could not start streaming transcription: {e}")))?;
+    for chunk in pcm.chunks(CHUNK) {
+        stream
+            .feed(chunk)
+            .map_err(|e| Error::Other(format!("transcription failed: {e}")))?;
+    }
+    stream
+        .finalize()
+        .map_err(|e| Error::Other(format!("transcription failed: {e}")))?;
+    Ok(stream.text().full)
 }
 
 #[cfg(test)]

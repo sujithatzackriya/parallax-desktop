@@ -56,8 +56,11 @@ export default function StatusBar({ settings }: { settings: Settings }) {
     });
   }, []);
 
+  // `models` here is the built-in list (whisper); a transcribe.cpp model
+  // chosen from the fetched catalogue is not in it, so it is `undefined` and
+  // shown by its id below rather than the family-and-size line.
   const speech = models.find(
-    (m) => m.kind === 'transcription' && m.name === settings.transcriptionModel,
+    (m) => m.kind === 'transcription' && m.id === settings.transcriptionModel,
   );
   const reasoning = models.find((m) => m.id === settings.modelId);
   // A custom path overrides its catalogue counterpart the moment it is set
@@ -69,7 +72,12 @@ export default function StatusBar({ settings }: { settings: Settings }) {
   const customReasoningName = settings.customReasoningModelPath
     ? baseName(settings.customReasoningModelPath)
     : null;
-  const speechReady = customSpeechName !== null || speech?.state.kind === 'ready';
+  // A chosen model that is not a built-in is a catalogue model, which Settings
+  // only lets you select once it is downloaded -- so treat it as ready.
+  const speechReady =
+    customSpeechName !== null ||
+    speech?.state.kind === 'ready' ||
+    (!speech && settings.transcriptionModel !== '');
 
   return (
     <footer className={styles.bar}>
@@ -94,8 +102,11 @@ export default function StatusBar({ settings }: { settings: Settings }) {
           className={speechReady ? styles.model : styles.modelPending}
           title={settings.customTranscriptionModelPath ?? detail(speech)}
         >
-          {customSpeechName ?? (speech ? `whisper ${speech.name} ${speech.params}` : 'no speech model')}{' '}
-          {customSpeechName ? 'ready' : stateLabel(speech)}
+          {customSpeechName ??
+            (speech
+              ? `whisper ${speech.name} ${speech.params}`
+              : settings.transcriptionModel || 'no speech model')}{' '}
+          {customSpeechName ? 'ready' : speech ? stateLabel(speech) : 'ready'}
         </span>
         <span className={styles.divider} aria-hidden>
           ·

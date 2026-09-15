@@ -4,6 +4,7 @@ pub mod download;
 pub mod edge;
 pub mod entry;
 pub mod question;
+pub mod remote;
 pub mod settings;
 pub mod type_def;
 
@@ -12,7 +13,6 @@ pub use entry::{ActionItem, Entry, Register, Role, Span};
 pub use question::Question;
 pub use settings::{
     ComputeBackend, ModelInfo, ModelKind, ModelState, Residency, Settings, SystemProfile, Theme,
-    TranscriptionModel,
 };
 pub use type_def::{Mark, NewType, ProbeTier, TypeDef, TypePatch};
 
@@ -168,7 +168,7 @@ mod contract_tests {
         assert_eq!(v["residency"], json!("warm"));
         assert_eq!(v["providerName"], json!("llama-server"));
         assert_eq!(v["defaultLocalOnly"], json!(false));
-        assert_eq!(v["transcriptionModel"], json!("base"));
+        assert_eq!(v["transcriptionModel"], json!("whisper-base"));
         assert_eq!(v["transcriptionBackend"], json!("auto"));
         assert_eq!(v["reasoningBackend"], json!("auto"));
         assert_eq!(v["theme"], json!("system"));

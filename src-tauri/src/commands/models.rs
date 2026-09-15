@@ -260,7 +260,7 @@ pub fn set_up(settings: &crate::model::Settings, models: &[ModelInfo]) -> bool {
     }
 
     let transcription_ok = has_custom(&settings.custom_transcription_model_path)
-        || ready(settings.transcription_model.model_id());
+        || ready(&settings.transcription_model);
 
     // The embedder is optional -- connections work without one -- so only a
     // chosen one has to be there.
@@ -307,7 +307,7 @@ pub fn setup_complete(state: State<AppState>) -> Result<bool> {
 #[cfg(test)]
 mod set_up_tests {
     use super::*;
-    use crate::model::{Settings, TranscriptionModel};
+    use crate::model::Settings;
 
     fn on_disk(ids: &[&str]) -> Vec<ModelInfo> {
         catalogue()
@@ -326,7 +326,7 @@ mod set_up_tests {
     fn chosen() -> Settings {
         Settings {
             model_id: Some("qwen3-4b-q4".into()),
-            transcription_model: TranscriptionModel::Base,
+            transcription_model: "whisper-base".into(),
             embedding_model_id: Some("bge-small-en-v1.5".into()),
             ..Settings::default()
         }
@@ -397,7 +397,7 @@ mod set_up_tests {
         let settings = Settings {
             model_id: None,
             custom_reasoning_model_path: Some(file.to_str().unwrap().into()),
-            transcription_model: TranscriptionModel::Base,
+            transcription_model: "whisper-base".into(),
             embedding_model_id: None,
             ..Settings::default()
         };
@@ -591,11 +591,30 @@ pub async fn download_model(
     app: AppHandle,
     state: State<'_, AppState>,
     model_id: String,
+    url: Option<String>,
 ) -> Result<()> {
-    let info = catalogue()
-        .into_iter()
-        .find(|m| m.id == model_id)
-        .ok_or_else(|| Error::NotFound(format!("no model called {model_id}")))?;
+    // A `url` marks a model from the fetched transcription catalogue
+    // (`list_transcription_catalog`): the frontend already knows where it lives
+    // and the file is `{id}.gguf` like any other. Size is unknown, which the
+    // atomic `.part`->final rename makes fine -- a present file is complete.
+    // Without a url the id must name a built-in, so onboarding is unchanged.
+    let info = match url {
+        Some(url) => ModelInfo {
+            id: model_id.clone(),
+            kind: ModelKind::Transcription,
+            name: model_id.clone(),
+            params: String::new(),
+            quantization: String::new(),
+            size_bytes: 0,
+            recommended_ram_bytes: 0,
+            state: ModelState::NotDownloaded,
+            url,
+        },
+        None => catalogue()
+            .into_iter()
+            .find(|m| m.id == model_id)
+            .ok_or_else(|| Error::NotFound(format!("no model called {model_id}")))?,
+    };
     let dest = state.models_dir().join(format!("{}.gguf", info.id));
 
     // §9.4 decides the lane, not the caller. Transcription gates recording and
@@ -658,4 +677,38 @@ fn run_download(app: AppHandle, info: ModelInfo, dest: PathBuf, pace: Pace) -> R
         },
     });
     outcome
+}
+
+/// The full transcription catalogue -- every transcribe.cpp model the library
+/// author publishes -- fetched from Hugging Face. Kept apart from `list_models`
+/// so onboarding stays offline and static; only Settings pays the network cost.
+#[tauri::command]
+pub async fn list_transcription_catalog(state: State<'_, AppState>) -> Result<Vec<ModelInfo>> {
+    let dir = state.models_dir();
+    tauri::async_runtime::spawn_blocking(move || crate::model::remote::list(&dir))
+        .await
+        .map_err(|e| Error::Other(format!("the catalogue lookup did not finish: {e}")))?
+}
+
+/// Removes a downloaded model and any partial, freeing the space and returning
+/// the entry to NotDownloaded. `model_id` is the on-disk name; it is validated
+/// as a bare filename so this can never reach outside the models directory.
+#[tauri::command]
+pub fn delete_model(state: State<AppState>, model_id: String) -> Result<()> {
+    let safe = !model_id.is_empty()
+        && model_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        && !model_id.contains("..");
+    if !safe {
+        return Err(Error::NotFound(format!("no model called {model_id}")));
+    }
+    let file = state.models_dir().join(format!("{model_id}.gguf"));
+    let part = crate::model::download::part_path(&file);
+    for path in [file, part] {
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
 }

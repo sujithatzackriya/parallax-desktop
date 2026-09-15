@@ -278,7 +278,9 @@ export interface Settings {
   providerName: string;
   /** Global default for the per-entry local-only flag (§9.4). */
   defaultLocalOnly: boolean;
-  transcriptionModel: 'tiny' | 'base' | 'small';
+  /** A transcription catalogue id (also the file name on disk, `{id}.gguf`) —
+   *  any whisper size or transcribe.cpp model, not a fixed set. */
+  transcriptionModel: string;
   /**
    * `null` until chosen. Connections still work without it — topics propose on
    * their own and cosine only reorders them — so this is an upgrade to the

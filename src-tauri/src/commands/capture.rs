@@ -96,7 +96,7 @@ pub async fn partial_transcript(state: State<'_, AppState>) -> Result<String> {
     };
     let Some(model) = state.transcription_model(
         settings.custom_transcription_model_path.as_deref(),
-        settings.transcription_model,
+        &settings.transcription_model,
     ) else {
         return Ok(String::new());
     };
@@ -285,7 +285,7 @@ pub fn finish(
 
     let transcript = match state.transcription_model(
         settings.custom_transcription_model_path.as_deref(),
-        settings.transcription_model,
+        &settings.transcription_model,
     ) {
         Some(model) => crate::stt::transcribe(&model, &pcm, settings.transcription_backend)?.text,
         // No model yet is not a lost recording: the audio is the record and
